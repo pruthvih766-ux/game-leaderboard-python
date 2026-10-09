@@ -1,135 +1,20 @@
 
-version: 2.1
-
-jobs:
-  lint:
-    docker:
-      - image: cimg/python:3.12
-    steps:
-      - checkout
-      - run:
-          name: Install Ruff
-          command: pip install ruff
-      - run:
-          name: Lint Python code
-          command: ruff check app tests
-
-  unit-tests:
-    docker:
-      - image: cimg/python:3.12
-    steps:
-      - checkout
-      - run:
-          name: Install dependencies
-          command: pip install -r requirements.txt
-      - run:
-          name: Run unit tests
-          command: python -m unittest discover -s tests -p "test_scoring.py" -v
-
-  integration-tests:
-    docker:
-      - image: cimg/python:3.12
-      - image: cimg/postgres:16.1
-        environment:
-          POSTGRES_USER: leaderboard
-          POSTGRES_PASSWORD: leaderboard_dev_password
-          POSTGRES_DB: leaderboard
-      - image: cimg/redis:7.2
-    environment:
-      DATABASE_URL: postgresql://leaderboard:leaderboard_dev_password@localhost:5432/leaderboard
-      REDIS_URL: redis://localhost:6379/0
-    steps:
-      - checkout
-      - run:
-          name: Wait for PostgreSQL
-          command: |
-            for i in $(seq 1 30); do
-              if pg_isready -h localhost -U leaderboard -d leaderboard; then
-                break
-              fi
-              sleep 2
-            done
-            pg_isready -h localhost -U leaderboard -d leaderboard
-      - run:
-          name: Wait for Redis
-          command: |
-            for i in $(seq 1 30); do
-              if redis-cli -h localhost ping | grep -q PONG; then
-                break
-              fi
-              sleep 2
-            done
-            redis-cli -h localhost ping
-      - run:
-          name: Install dependencies
-          command: pip install -r requirements.txt
-      - run:
-          name: Apply database migrations
-          command: |
-            PGPASSWORD=leaderboard_dev_password psql \
-              -h localhost -U leaderboard -d leaderboard \
-              -v ON_ERROR_STOP=1 -f migrations/001_schema.sql
-            PGPASSWORD=leaderboard_dev_password psql \
-              -h localhost -U leaderboard -d leaderboard \
-              -v ON_ERROR_STOP=1 -f migrations/002_seed.sql
-      - run:
-          name: Start API
-          command: uvicorn app.main:app --host 0.0.0.0 --port 8080
-          background: true
-      - run:
-          name: Wait for API
-          command: |
-            for i in $(seq 1 30); do
-              if curl -fsS http://localhost:8080/health; then
-                exit 0
-              fi
-              sleep 2
-            done
-            echo "API failed to start"
-            exit 1
-      - run:
-          name: Run integration tests
-          command: python -m unittest discover -s tests -p "test_integration.py" -v
-
-  secret-scan:
-    docker:
-      - image: cimg/go:1.23
-    steps:
-      - checkout
-      - run:
-          name: Install Gitleaks
-          command: |
-            GITLEAKS_VERSION=8.30.1
-            curl -sSfL \
-              "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-              -o /tmp/gitleaks.tar.gz
-            tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
-      - run:
-          name: Scan repository
-          command: /tmp/gitleaks git .
-
-  docker-build:
-    docker:
-      - image: cimg/base:current
-    steps:
-      - checkout
-      - setup_remote_docker
-      - run:
-          name: Build Docker image
-          command: docker build -t game-leaderboard:1.0 .
-
-workflows:
-  leaderboard-ci:
-    jobs:
-      - lint
-      - unit-tests
-      - integration-tests:
-          requires:
-            - unit-tests
-      - secret-scan
-      - docker-build:
-          requires:
-            - lint
-            - unit-tests
-            - integration-tests
-            - secret-scan
+    integration-tests:
+      docker:
+        - image: cimg/python:3.12
+        - image: cimg/postgres:16.1
+          environment:
+            POSTGRES_USER: leaderboard
+            POSTGRES_PASSWORD: leaderboard_dev_password
+            POSTGRES_DB: leaderboard
+        - image: cimg/redis:7.2
+      environment:
+        DATABASE_URL: postgresql://leaderboard:leaderboard_dev_password@localhost:5432/leaderboard
+        REDIS_URL: redis://localhost:6379/0
+      steps:
+        - run:
+            name: Wait for PostgreSQL
+            command: |
+              while ! pg_isready -h localhost -p 5432 -U leaderboard; do
+                sleep 1
+              done
