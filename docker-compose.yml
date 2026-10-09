@@ -1,0 +1,69 @@
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: leaderboard
+      POSTGRES_PASSWORD: leaderboard_dev_password
+      POSTGRES_DB: leaderboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leaderboard -d leaderboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://leaderboard:leaderboard_dev_password@db:5432/leaderboard
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS _schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
+        for file in /migrations/*.sql; do
+          name="$${file##*/}"
+          applied="$$(psql "$$DATABASE_URL" -tAc "SELECT 1 FROM _schema_migrations WHERE filename = '$$name'")"
+          if [ "$$applied" = "1" ]; then
+            echo "Skipping $$name"
+            continue
+          fi
+          echo "Applying $$name"
+          psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$file"
+          psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO _schema_migrations (filename) VALUES ('$$name')"
+        done
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://leaderboard:leaderboard_dev_password@db:5432/leaderboard
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
