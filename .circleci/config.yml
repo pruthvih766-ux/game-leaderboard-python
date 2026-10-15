@@ -138,12 +138,19 @@ jobs:
       - run:
           name: Build and push Docker Hub images
           command: |
-            set -eu
+            set -euo pipefail
+
+            if [ -z "${DOCKERHUB_USER:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "ERROR: DOCKERHUB_USER and DOCKERHUB_TOKEN must be set as"
+              echo "       non-empty environment variables in your CircleCI project"
+              echo "       settings (Project Settings → Environment Variables)."
+              exit 1
+            fi
 
             IMAGE="${DOCKERHUB_USER}/game-leaderboard-python"
             SHORT_SHA=$(echo "${CIRCLE_SHA1}" | cut -c1-7)
 
-            echo "${DOCKERHUB_TOKEN}" | docker login \
+            printf '%s' "${DOCKERHUB_TOKEN}" | docker login \
               --username "${DOCKERHUB_USER}" \
               --password-stdin
 
