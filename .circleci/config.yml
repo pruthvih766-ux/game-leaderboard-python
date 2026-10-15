@@ -140,12 +140,24 @@ jobs:
           command: |
             set -euo pipefail
 
-            if [ -z "${DOCKERHUB_USER:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+            # Strip accidental whitespace that can silently break auth
+            DOCKERHUB_USER="$(printf '%s' "${DOCKERHUB_USER:-}" | tr -d '[:space:]')"
+            DOCKERHUB_TOKEN="$(printf '%s' "${DOCKERHUB_TOKEN:-}" | tr -d '[:space:]')"
+
+            if [ -z "${DOCKERHUB_USER}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
               echo "ERROR: DOCKERHUB_USER and DOCKERHUB_TOKEN must be set as"
               echo "       non-empty environment variables in your CircleCI project"
               echo "       settings (Project Settings → Environment Variables)."
               exit 1
             fi
+
+            if printf '%s' "${DOCKERHUB_USER}" | grep -q '@'; then
+              echo "ERROR: DOCKERHUB_USER appears to be an email address."
+              echo "       Docker Hub authentication requires your username, not your email."
+              exit 1
+            fi
+
+            echo "Authenticating to Docker Hub as: ${DOCKERHUB_USER}"
 
             IMAGE="${DOCKERHUB_USER}/game-leaderboard-python"
             SHORT_SHA=$(echo "${CIRCLE_SHA1}" | cut -c1-7)
