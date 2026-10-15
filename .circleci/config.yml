@@ -122,28 +122,91 @@ jobs:
           name: Scan repository
           command: /tmp/gitleaks git .
 
-  docker-build:
+  docker-publish:
+    parameters:
+      moving_tag:
+        type: enum
+        enum: ["qa", "stage", "prod"]
+      immutable_prefix:
+        type: enum
+        enum: ["main", "staging", "prod"]
     docker:
       - image: cimg/base:current
     steps:
       - checkout
       - setup_remote_docker
       - run:
-          name: Build Docker image
-          command: docker build -t game-leaderboard:1.0 .
+          name: Build and push Docker Hub images
+          command: |
+            set -eu
+
+            IMAGE="${DOCKERHUB_USER}/game-leaderboard-python"
+            SHORT_SHA=$(echo "${CIRCLE_SHA1}" | cut -c1-7)
+
+            echo "${DOCKERHUB_TOKEN}" | docker login \
+              --username "${DOCKERHUB_USER}" \
+              --password-stdin
+
+            docker build \
+              -t "${IMAGE}:<< parameters.moving_tag >>" \
+              -t "${IMAGE}:<< parameters.immutable_prefix >>-${SHORT_SHA}" \
+              .
+
+            docker push "${IMAGE}:<< parameters.moving_tag >>"
+            docker push "${IMAGE}:<< parameters.immutable_prefix >>-${SHORT_SHA}"
+
+            docker logout
 
 workflows:
   leaderboard-ci:
     jobs:
-      - lint
-      - unit-tests
+      - lint:
+          filters:
+            branches:
+              only: main
+
+      - unit-tests:
+          filters:
+            branches:
+              only: main
+
       - integration-tests:
           requires:
             - unit-tests
-      - secret-scan
-      - docker-build:
+          filters:
+            branches:
+              only: main
+
+      - secret-scan:
+          filters:
+            branches:
+              only: main
+
+      - docker-publish:
+          name: publish-qa
+          moving_tag: qa
+          immutable_prefix: main
           requires:
             - lint
             - unit-tests
             - integration-tests
             - secret-scan
+          filters:
+            branches:
+              only: main
+
+      - docker-publish:
+          name: publish-stage
+          moving_tag: stage
+          immutable_prefix: staging
+          filters:
+            branches:
+              only: staging
+
+      - docker-publish:
+          name: publish-prod
+          moving_tag: prod
+          immutable_prefix: prod
+          filters:
+            branches:
+              only: prod
